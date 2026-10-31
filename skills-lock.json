@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "polkadot-products-devnet": {
+      "source": "BrandonFilth/polkadot-products-devnet",
+      "sourceType": "github",
+      "skillPath": "skills/polkadot-products-devnet/SKILL.md",
+      "computedHash": "15e85ddc817588359abe3e84aee38ca14011f510e0b01252097e7237069780da"
+    }
+  }
+}
