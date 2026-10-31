@@ -35,7 +35,8 @@ nav a.on { background: #ffffff1f; color: #fff; }
 .bar.busy { background: #fff4d6; }
 .bar.error { background: #fde4e1; color: var(--bad); cursor: pointer; }
 
-main.split { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 16px; flex: 1; }
+main.split { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; padding: 16px; flex: 1; }
+@media (max-width: 1300px) { main.split { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 main.single { padding: 16px; display: flex; justify-content: center; flex: 1; }
 main.single > .screen { width: 100%; max-width: 460px; }
 main.single > .screen.wide { max-width: 760px; }

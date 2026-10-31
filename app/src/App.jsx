@@ -147,6 +147,9 @@ export default function App() {
   if (!cfg) return <div className="loading">Cargando…</div>;
 
   const now = clock + (Number.isFinite(offset.current) ? offset.current : 0);
+  // Zelle is off-chain: the sender's simulated payment is a local flag the US cashier view reads (shared across tabs via localStorage).
+  const zelleKey = `remesa.zelle.${cfg.remesa}`;
+  const zellePaid = LS.get(zelleKey) ?? [];
   const ctx = {
     c,
     cfg,
@@ -155,15 +158,21 @@ export default function App() {
     run,
     now,
     refresh,
+    zellePaid: (id) => zellePaid.includes(String(id)),
+    payZelle: (id) => {
+      LS.set(zelleKey, [...zellePaid, String(id)]);
+      refresh();
+    },
     txUrl: (h) => (cfg.explorer ? `${cfg.explorer}/tx/${h}` : null),
   };
   const page = !ready || !state ? 'preparar' : route;
 
   const tabs = [
     ['demo', 'Demo'],
-    ['enviar', 'Enviar'],
-    ['cajero', 'Cajero'],
-    ['recibido', 'Recibido'],
+    ['enviar', 'Remitente'],
+    ['cajeroUS', 'Cajera US'],
+    ['cajeroMX', 'Cajero MX'],
+    ['recibido', 'Receptor'],
     ['preparar', 'Preparar'],
   ];
 
@@ -196,8 +205,11 @@ export default function App() {
           <Phone title="Abuelita · EE. UU.">
             <Enviar ctx={ctx} />
           </Phone>
-          <Phone title="Cajero MX">
-            <Cajero ctx={ctx} />
+          <Phone title="Chelsea · cajera US">
+            <CajeroUS ctx={ctx} />
+          </Phone>
+          <Phone title="Rubén · cajero MX">
+            <CajeroMX ctx={ctx} />
           </Phone>
           <Phone title="Nieta · México">
             <Recibido ctx={ctx} />
@@ -205,7 +217,8 @@ export default function App() {
         </main>
       )}
       {page === 'enviar' && <main className="single"><Enviar ctx={ctx} /></main>}
-      {page === 'cajero' && <main className="single"><Cajero ctx={ctx} /></main>}
+      {page === 'cajeroUS' && <main className="single"><CajeroUS ctx={ctx} /></main>}
+      {page === 'cajeroMX' && <main className="single"><CajeroMX ctx={ctx} /></main>}
       {page === 'recibido' && <main className="single"><Recibido ctx={ctx} /></main>}
       {page === 'preparar' && (
         <main className="single">
@@ -355,13 +368,13 @@ function EnvioEnCurso({ ctx, t, onNew }) {
           <div className="amount">{ch.fmtUSD(t.amountUSD)}</div>
           {left > 0 ? (
             <>
-              <button
-                className="zelle-btn"
-                disabled={!!busy}
-                onClick={() => run('Cajero US confirma tu Zelle', () => ch.send(c, 'cajeroUS', 'remesa', 'createTransfer', [t.id]))}
-              >
-                Pagar {ch.fmtUSD(t.amountUSD)}
-              </button>
+              {ctx.zellePaid(t.id) ? (
+                <p className="ok">✔ Pagado. Esperando que la cajera confirme que recibió tu Zelle…</p>
+              ) : (
+                <button className="zelle-btn" onClick={() => ctx.payZelle(t.id)}>
+                  Pagar {ch.fmtUSD(t.amountUSD)}
+                </button>
+              )}
               <small className="muted">La reserva vence en {mmss(left)}</small>
             </>
           ) : (
@@ -435,9 +448,49 @@ function Tracker({ t }) {
   );
 }
 
-// ---------- Cajero (MX cashier) ----------
+// ---------- Cajera US (receives Zelle, releases digital dollars) ----------
 
-function Cajero({ ctx }) {
+function CajeroUS({ ctx }) {
+  const { c, state, busy, run, now } = ctx;
+  const orders = state.transfers.filter((t) => t.cashierUS === c.addr.cajeroUS && t.statusName === 'Reserved' && Number(t.deadline) > now);
+  return (
+    <div className="screen">
+      <h2>Zelle por confirmar</h2>
+      {orders.length === 0 && <p className="muted">Esperando envíos…</p>}
+      {orders.map((t) => {
+        const paid = ctx.zellePaid(t.id);
+        return (
+          <div key={String(t.id)} className="bank zelle">
+            <div className="bank-head">
+              Zelle · envío #{String(t.id)} <Simulado />
+            </div>
+            <div className="amount">{ch.fmtUSD(t.amountUSD)}</div>
+            <div className="row muted">
+              <span>Sueltas al confirmar</span>
+              <span>{ch.fmtUSD(t.usdtAmount)} digitales</span>
+            </div>
+            {paid ? <p className="ok">✔ Te llegó el Zelle</p> : <p className="muted">Aún no llega el pago…</p>}
+            <button
+              className="primary"
+              disabled={!!busy || !paid}
+              onClick={() => run('Confirmando Zelle', () => ch.send(c, 'cajeroUS', 'remesa', 'createTransfer', [t.id]))}
+            >
+              Ya recibí el Zelle
+            </button>
+            <small className="muted">La reserva vence en {mmss(Number(t.deadline) - now)}</small>
+          </div>
+        );
+      })}
+      <h3>Mi garantía y reputación</h3>
+      <CashierCard name="Chelsea" k={state.us} rateLabel="dólar digital por USD" />
+      <History state={state} />
+    </div>
+  );
+}
+
+// ---------- Cajero MX (receives digital dollars, pays SPEI) ----------
+
+function CajeroMX({ ctx }) {
   const { c, state } = ctx;
   const orders = state.transfers.filter((t) => t.cashierMX === c.addr.cajeroMX && t.statusName === 'Assigned');
   return (
@@ -447,9 +500,16 @@ function Cajero({ ctx }) {
       {orders.map((t) => (
         <SpeiCard key={String(t.id)} ctx={ctx} t={t} />
       ))}
-      <h3>Garantías y reputación</h3>
-      <CashierCard name="Cajero MX" k={state.mx} rateLabel="MXN por dólar" />
-      <CashierCard name="Cajero US" k={state.us} rateLabel="dólar digital por USD" />
+      <h3>Mi garantía y reputación</h3>
+      <CashierCard name="Rubén" k={state.mx} rateLabel="MXN por dólar" />
+      <History state={state} />
+    </div>
+  );
+}
+
+function History({ state }) {
+  return (
+    <>
       <h3>Últimos envíos</h3>
       <ul className="history">
         {state.transfers.slice(0, 6).map((t) => (
@@ -458,7 +518,7 @@ function Cajero({ ctx }) {
           </li>
         ))}
       </ul>
-    </div>
+    </>
   );
 }
 

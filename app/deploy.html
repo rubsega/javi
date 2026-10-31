@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Desplegar contratos</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 16px; background: #fff; color: #111; }
+      button { font-size: 1rem; padding: 0.6rem 1rem; }
+      pre { background: #f3f3f3; padding: 1rem; white-space: pre-wrap; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <h1>Desplegar MockUSD + Remesa con MetaMask</h1>
+    <p>Red: Polkadot Hub TestNet (chainId 420420417). Tu cuenta de MetaMask queda como <code>reporter</code>.</p>
+    <button id="go">Desplegar</button>
+    <pre id="log"></pre>
+    <script type="module">
+      import { createWalletClient, createPublicClient, custom, http } from 'viem';
+      import { MockUSD, Remesa, TESTNET, DEMO } from './src/chain.js';
+
+      const chain = {
+        id: TESTNET.chainId,
+        name: 'Polkadot Hub TestNet',
+        nativeCurrency: { name: 'PAS', symbol: 'PAS', decimals: 18 },
+        rpcUrls: { default: { http: [TESTNET.rpc] } },
+        blockExplorers: { default: { name: 'Blockscout', url: TESTNET.explorer } },
+      };
+      const out = document.getElementById('log');
+      const log = (s) => (out.textContent += s + '\n');
+
+      document.getElementById('go').onclick = async () => {
+        try {
+          if (!window.ethereum) throw new Error('No se encontró MetaMask en este navegador.');
+          const wallet = createWalletClient({ chain, transport: custom(window.ethereum) });
+          const pub = createPublicClient({ chain, transport: http(TESTNET.rpc) });
+          const [account] = await wallet.requestAddresses();
+          await wallet.switchChain({ id: chain.id }).catch(() => wallet.addChain({ chain }));
+          log(`Cuenta: ${account}`);
+
+          const deploy = async (name, c, args) => {
+            log(`Desplegando ${name}… confirma en MetaMask`);
+            const hash = await wallet.deployContract({ account, abi: c.abi, bytecode: c.bytecode, args });
+            const r = await pub.waitForTransactionReceipt({ hash });
+            if (r.status !== 'success' || !r.contractAddress) throw new Error(`${name} falló (${hash})`);
+            log(`${name}: ${r.contractAddress}\n  ${TESTNET.explorer}/address/${r.contractAddress}`);
+            return r.contractAddress;
+          };
+          const usd = await deploy('MockUSD', MockUSD, []);
+          await deploy('Remesa', Remesa, [usd, DEMO.referenceRate]);
+          log('Listo ✔');
+        } catch (e) {
+          log('Error: ' + (e.shortMessage ?? e.message));
+        }
+      };
+    </script>
+  </body>
+</html>
