@@ -50,6 +50,7 @@ contract Remesa {
     uint256 public referenceRate; // MXN per USD, scaled by RATE_SCALE
     uint256 public maxSpreadBps = 150;
 
+    mapping(address => bool) public approved; // reporter-approved cashiers (today a KYC; roadmap: Proof of Personhood / OpenGov)
     mapping(address => Cashier) public cashiers;
     address[] private cashierAddrs;
 
@@ -61,6 +62,7 @@ contract Remesa {
     mapping(address => uint256) public mxnBalance; // simulated bank: credited on Paid
     mapping(address => uint256) public openReservations;
 
+    event CashierApproved(address indexed cashier, bool approved);
     event CashierRegistered(address indexed cashier, Kind kind, uint256 rate, uint256 maxAmount);
     event CollateralDeposited(address indexed cashier, uint256 amount);
     event WithdrawRequested(address indexed cashier, uint256 amount, uint256 availableAt);
@@ -81,6 +83,7 @@ contract Remesa {
 
     error NotReporter();
     error NotRegistered();
+    error NotApproved();
     error AlreadyRegistered();
     error InvalidAmount();
     error InvalidKey();
@@ -114,7 +117,14 @@ contract Remesa {
 
     // ---------- cashiers ----------
 
+    /// Only approved accounts can register, and revoking takes a cashier out of matching.
+    function approveCashier(address cashier, bool ok) external onlyReporter {
+        approved[cashier] = ok;
+        emit CashierApproved(cashier, ok);
+    }
+
     function registerCashier(Kind kind, uint256 rate, uint256 maxAmount, string calldata bankInfo) external {
+        if (!approved[msg.sender]) revert NotApproved();
         Cashier storage c = cashiers[msg.sender];
         if (c.registered) revert AlreadyRegistered();
         if (rate == 0 || maxAmount == 0) revert InvalidAmount();
@@ -346,7 +356,7 @@ contract Remesa {
         for (uint256 i = 0; i < cashierAddrs.length; i++) {
             address a = cashierAddrs[i];
             Cashier storage c = cashiers[a];
-            if (a == exclude || !c.active || c.kind != kind) continue;
+            if (a == exclude || !approved[a] || !c.active || c.kind != kind) continue;
             if (c.rate < minRate || c.rate <= bestRate) continue;
             if (c.maxAmount < amountUSD || c.collateral < c.maxAmount) continue;
             uint256 lock = kind == Kind.US ? amountUSD * c.rate / RATE_SCALE : usdtAmount;

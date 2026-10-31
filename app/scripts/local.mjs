@@ -11,6 +11,8 @@ console.log(`MockUSD ${cfg.usd}\nRemesa  ${cfg.remesa}`);
 await setupDemo(connect(cfg));
 
 // Ganache's deterministic keys are public knowledge; this file only ever points at the local chain.
+// git does not keep empty folders, so public/ may be missing on a fresh clone.
+fs.mkdirSync(path.resolve(import.meta.dirname, '../public'), { recursive: true });
 fs.writeFileSync(path.resolve(import.meta.dirname, '../public/local.json'), JSON.stringify(cfg, null, 2));
 
 const vite = await createServer({ root: path.resolve(import.meta.dirname, '..') });

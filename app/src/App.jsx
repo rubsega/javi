@@ -50,9 +50,11 @@ const ERROR_ES = {
   NotAllowed: 'Esta cuenta no puede hacer este paso.',
   BadStatus: 'El envío ya cambió de estado.',
   InsufficientFree: 'No hay garantía libre suficiente.',
+  NotApproved: 'Esta cuenta no está aprobada como cajero.',
+  NotReporter: 'Solo la cuenta que desplegó el contrato puede hacer esto.',
 };
 
-const ROLE_ES = { abuelita: 'Abuelita (EE. UU.)', cajeroUS: 'Cajero US', cajeroMX: 'Cajero MX', nieta: 'Nieta (México)' };
+const ROLE_ES = { abuelita: 'Abuelita (EE. UU.)', cajeroUS: 'Chelsea · cajera US', cajeroMX: 'Rubén · cajero MX', nieta: 'Nieta (México)' };
 const STATUS_ES = {
   Reserved: 'Reservado',
   Assigned: 'Asignado a cajero MX',
@@ -638,10 +640,17 @@ function Preparar({ ctx, setCfg }) {
     LS.set('remesa.mode', mode);
     location.reload();
   };
-  const save = () => {
-    LS.set('remesa.testnet', { usd: usd.trim(), remesa: remesa.trim() });
+  const save = (a = { usd: usd.trim(), remesa: remesa.trim() }) => {
+    LS.set('remesa.testnet', a);
     loadConfig().then(setCfg);
   };
+  const deploy = () =>
+    run('Desplegando contratos', async () => {
+      const a = await ch.deployDemo(c, (l) => setLog((x) => [...x, l]));
+      setUsd(a.usd);
+      setRemesa(a.remesa);
+      save(a);
+    });
 
   return (
     <div className="screen wide">
@@ -664,8 +673,17 @@ function Preparar({ ctx, setCfg }) {
       {cfg.mode === 'testnet' && (
         <div className="card">
           <p>
-            1. Despliega <code>MockUSD</code> y luego <code>Remesa(token, 17000000)</code> en Remix (ver README). 2. Pega las direcciones:
+            1. Pide PAS en el{' '}
+            <a href="https://faucet.polkadot.io" target="_blank" rel="noreferrer">
+              faucet
+            </a>{' '}
+            (Paseo → Asset Hub 1000) para la abuelita: <code className="mono">{c.addr.abuelita}</code>
           </p>
+          <p>2. Despliega los contratos desde aquí (firma la abuelita y queda como reporter), o pega direcciones ya desplegadas:</p>
+          <button className={ready ? '' : 'primary'} disabled={!!busy} onClick={deploy}>
+            Desplegar contratos
+          </button>
+          {!ready && log.length > 0 && <pre className="log">{log.join('\n')}</pre>}
           <label>
             Dirección de MockUSD
             <input className="mono" value={usd} onChange={(e) => setUsd(e.target.value)} placeholder="0x…" />
@@ -674,15 +692,8 @@ function Preparar({ ctx, setCfg }) {
             Dirección de Remesa
             <input className="mono" value={remesa} onChange={(e) => setRemesa(e.target.value)} placeholder="0x…" />
           </label>
-          <button onClick={save}>Guardar direcciones</button>
-          <p>
-            3. Pide PAS en el{' '}
-            <a href="https://faucet.polkadot.io" target="_blank" rel="noreferrer">
-              faucet
-            </a>{' '}
-            (Paseo → Asset Hub 1000) para la abuelita: <code className="mono">{c.addr.abuelita}</code>
-          </p>
-          <p>4. Toca "Preparar demo". La abuelita reparte PAS a los demás.</p>
+          <button onClick={() => save()}>Guardar direcciones</button>
+          <p>3. Toca "Preparar demo". La abuelita reparte PAS, aprueba a Chelsea y a Rubén como cajeros y los registra.</p>
         </div>
       )}
 

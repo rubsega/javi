@@ -25,6 +25,7 @@ before(async () => {
   await setupDemo(c, () => {}); // idempotent
   // spare = same roles but "cajeroMX" is a second MX cashier with a worse (still valid) rate
   spare = connect({ ...globalThis.cfg, keys: { ...globalThis.cfg.keys, cajeroMX: pks[5] } });
+  await send(c, 'abuelita', 'remesa', 'approveCashier', [spare.addr.cajeroMX, true]);
   await send(spare, 'cajeroMX', 'remesa', 'registerCashier', [1, 16_800_000n, usd('500'), 'Banco 2']);
   await send(spare, 'cajeroMX', 'usd', 'mint', [spare.addr.cajeroMX, usd('1000')]);
   await send(spare, 'cajeroMX', 'usd', 'approve', [spare.cfg.remesa, usd('1000')]);
@@ -109,4 +110,15 @@ test('guards: unknown key, spread cap, open reservation limit', async () => {
 
   for (let i = 0; i < 3; i++) await send(c, 'abuelita', 'remesa', 'reserve', ['maria', usd('1')]);
   assert.equal(await revertName(send(c, 'abuelita', 'remesa', 'reserve', ['maria', usd('1')])), 'TooManyReservations');
+});
+
+test('cashier approval: only the reporter approves, unapproved cannot register, revoked leaves matching', async () => {
+  const stranger = connect({ ...globalThis.cfg, keys: { ...globalThis.cfg.keys, cajeroMX: pks[6] } });
+  assert.equal(await revertName(send(stranger, 'cajeroMX', 'remesa', 'registerCashier', [1, 17_000_000n, usd('500'), 'X'])), 'NotApproved');
+  assert.equal(await revertName(send(c, 'nieta', 'remesa', 'approveCashier', [stranger.addr.cajeroMX, true])), 'NotReporter');
+
+  await send(c, 'abuelita', 'remesa', 'approveCashier', [c.addr.cajeroMX, false]);
+  assert.equal((await quote(c, usd('10'))).mx, spare.addr.cajeroMX);
+  await send(c, 'abuelita', 'remesa', 'approveCashier', [c.addr.cajeroMX, true]);
+  assert.equal((await quote(c, usd('10'))).mx, c.addr.cajeroMX);
 });

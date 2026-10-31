@@ -17,8 +17,8 @@ export const TESTNET = {
 // Demo actors' parameters, used by setupDemo.
 export const DEMO = {
   referenceRate: 17_000_000n, // 17.00 MXN per USD; the reporter can update it with setReferenceRate
-  us: { rate: 995_000n, maxAmount: parseUnits('500', 18), collateral: parseUnits('2000', 18), bankInfo: 'Zelle: cajero.us@remesa.demo' },
-  mx: { rate: 16_830_000n, maxAmount: parseUnits('500', 18), collateral: parseUnits('2000', 18), bankInfo: 'Banco MX (SPEI)' },
+  us: { rate: 995_000n, maxAmount: parseUnits('500', 18), collateral: parseUnits('2000', 18), bankInfo: 'Chelsea · Zelle: chelsea@remesa.demo' },
+  mx: { rate: 16_830_000n, maxAmount: parseUnits('500', 18), collateral: parseUnits('2000', 18), bankInfo: 'Rubén · Banco MX (SPEI)' },
   nieta: { nickname: 'maria', clabe: '012180001234567897' },
 };
 
@@ -123,6 +123,21 @@ export async function findEventTx(c, eventName, id) {
   return logs.at(-1)?.transactionHash;
 }
 
+/// abuelita deploys both contracts, so she is the reporter that approves cashiers.
+export async function deployDemo(c, log = console.log) {
+  const deploy = async (name, contract, args) => {
+    log(`Desplegando ${name}…`);
+    const hash = await c.wallets.abuelita.deployContract({ abi: contract.abi, bytecode: contract.bytecode, args });
+    const receipt = await c.pub.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success' || !receipt.contractAddress) throw new Error(`${name} deploy failed (${hash})`);
+    log(`${name}: ${receipt.contractAddress}`);
+    return receipt.contractAddress;
+  };
+  const usd = await deploy('MockUSD', MockUSD, []);
+  const remesa = await deploy('Remesa', Remesa, [usd, DEMO.referenceRate]);
+  return { usd, remesa };
+}
+
 /// Idempotent: registers and funds both cashiers and the recipient's key. Safe to run twice.
 export async function setupDemo(c, log = console.log) {
   if (c.cfg.chainId === TESTNET.chainId) {
@@ -137,6 +152,10 @@ export async function setupDemo(c, log = console.log) {
     }
   }
   for (const [role, p, kind] of [['cajeroUS', DEMO.us, 0], ['cajeroMX', DEMO.mx, 1]]) {
+    if (!(await read(c, 'approved', [c.addr[role]]))) {
+      log(`Aprobando ${role}…`);
+      await send(c, 'abuelita', 'remesa', 'approveCashier', [c.addr[role], true]);
+    }
     const cashier = await getCashier(c, c.addr[role]);
     if (!cashier.registered) {
       log(`Registrando ${role}…`);

@@ -16,9 +16,9 @@ export async function startLocalChain(port = 8545) {
   const pks = Object.values(await server.provider.getInitialAccounts()).map((a) => a.secretKey);
   const rpc = `http://127.0.0.1:${port}`;
 
-  // pks[0] deploys and is the reporter; the four demo roles use pks[1..4]; the rest are spare for tests.
+  // The four demo roles use pks[1..4]; abuelita (pks[1]) deploys and is the reporter, like on testnet. The rest are spare for tests.
   const chain = { id: LOCAL_CHAIN_ID, name: 'Local', nativeCurrency: { name: 'PAS', symbol: 'PAS', decimals: 18 }, rpcUrls: { default: { http: [rpc] } } };
-  const deployer = createWalletClient({ chain, transport: http(rpc), account: privateKeyToAccount(pks[0]) });
+  const deployer = createWalletClient({ chain, transport: http(rpc), account: privateKeyToAccount(pks[1]) });
   const pub = createPublicClient({ chain, transport: http(rpc) });
   const deploy = async (c, args) => {
     const hash = await deployer.deployContract({ abi: c.abi, bytecode: c.bytecode, args });
