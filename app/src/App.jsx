@@ -610,6 +610,12 @@ function Recibido({ ctx }) {
   const incoming = state.transfers.find((t) => t.recipient === c.addr.nieta && t.statusName === 'Assigned');
   const [paidTx, setPaidTx] = useState(null);
   const [qr, setQr] = useState(null);
+  // QR the sender scans to fill in the recipient key. Prefix "remesa:" tells our scanner it is ours.
+  const [myQr, setMyQr] = useState(null);
+
+  useEffect(() => {
+    QRCode.toDataURL(`remesa:${ch.DEMO.nieta.nickname}`, { margin: 1, width: 160 }).then(setMyQr);
+  }, []);
 
   useEffect(() => {
     setPaidTx(null);
@@ -631,6 +637,14 @@ function Recibido({ ctx }) {
         <div className="muted">Saldo disponible</div>
         <div className="amount">{ch.fmtMXN(state.mxnBalance)}</div>
         <div className="mono muted">CLABE {state.clabe}</div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <strong>Mi código para cobrar</strong>
+        </div>
+        {myQr && <img className="qr" src={myQr} alt="Código QR con tu clave para recibir dinero" />}
+        <small className="muted">Muéstralo para que te envíen dinero. Lo escanean desde la pantalla "Enviar".</small>
       </div>
 
       {incoming && <div className="notice wait">💸 Tu dinero viene en camino (envío #{String(incoming.id)})…</div>}
