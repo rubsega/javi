@@ -6,18 +6,35 @@
     <title>Desplegar contratos</title>
     <style>
       body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 16px; background: #fff; color: #111; }
-      button { font-size: 1rem; padding: 0.6rem 1rem; }
+      button { font-size: 1rem; padding: 0.6rem 1rem; margin: 0.25rem 0; }
+      input { font-family: monospace; width: 100%; padding: 0.4rem; box-sizing: border-box; }
       pre { background: #f3f3f3; padding: 1rem; white-space: pre-wrap; word-break: break-all; }
+      section { border-top: 1px solid #ddd; margin-top: 1.5rem; padding-top: 0.5rem; }
     </style>
   </head>
   <body>
-    <h1>Desplegar MockUSD + Remesa con MetaMask</h1>
-    <p>Red: Polkadot Hub TestNet (chainId 420420417). Tu cuenta de MetaMask queda como <code>reporter</code>.</p>
-    <button id="go">Desplegar</button>
+    <h1>Herramientas del reporter (MetaMask)</h1>
+    <p>Red: Polkadot Hub TestNet (chainId 420420417). Firma tu cuenta de MetaMask.</p>
+
+    <section>
+      <h2>1. Desplegar MockUSD + Remesa</h2>
+      <p>Tu cuenta queda como <code>reporter</code>. Sáltalo si ya desplegaste.</p>
+      <button id="deploy">Desplegar</button>
+    </section>
+
+    <section>
+      <h2>2. Preparar la demo</h2>
+      <label>Dirección de Remesa <input id="remesa" placeholder="0x…" /></label>
+      <p>Usa las 4 cuentas de demo que guardó la app en este navegador (abre antes la app en modo Polkadot Hub TestNet).</p>
+      <button id="fund">Mandar 2 PAS a cada cuenta de demo</button>
+      <button id="approve">Aprobar a Chelsea y Rubén como cajeros</button>
+    </section>
+
     <pre id="log"></pre>
     <script type="module">
-      import { createWalletClient, createPublicClient, custom, http } from 'viem';
-      import { MockUSD, Remesa, TESTNET, DEMO } from './src/chain.js';
+      import { createWalletClient, createPublicClient, custom, http, parseEther } from 'viem';
+      import { privateKeyToAccount } from 'viem/accounts';
+      import { MockUSD, Remesa, ROLES, TESTNET, DEMO } from './src/chain.js';
 
       const chain = {
         id: TESTNET.chainId,
@@ -26,33 +43,113 @@
         rpcUrls: { default: { http: [TESTNET.rpc] } },
         blockExplorers: { default: { name: 'Blockscout', url: TESTNET.explorer } },
       };
+      const pub = createPublicClient({ chain, transport: http(TESTNET.rpc) });
       const out = document.getElementById('log');
       const log = (s) => (out.textContent += s + '\n');
+      const remesaInput = document.getElementById('remesa');
 
-      document.getElementById('go').onclick = async () => {
+      // Same localStorage keys as App.jsx (same origin).
+      const lsGet = (k) => {
         try {
-          if (!window.ethereum) throw new Error('No se encontró MetaMask en este navegador.');
-          const wallet = createWalletClient({ chain, transport: custom(window.ethereum) });
-          const pub = createPublicClient({ chain, transport: http(TESTNET.rpc) });
-          const [account] = await wallet.requestAddresses();
-          await wallet.switchChain({ id: chain.id }).catch(() => wallet.addChain({ chain }));
-          log(`Cuenta: ${account}`);
+          return JSON.parse(localStorage.getItem(k));
+        } catch {
+          return null;
+        }
+      };
+      const lsSet = (k, v) => {
+        try {
+          localStorage.setItem(k, JSON.stringify(v));
+        } catch {}
+      };
+      remesaInput.value = lsGet('remesa.testnet')?.remesa ?? '';
 
-          const deploy = async (name, c, args) => {
-            log(`Desplegando ${name}… confirma en MetaMask`);
-            const hash = await wallet.deployContract({ account, abi: c.abi, bytecode: c.bytecode, args });
-            const r = await pub.waitForTransactionReceipt({ hash });
-            if (r.status !== 'success' || !r.contractAddress) throw new Error(`${name} falló (${hash})`);
-            log(`${name}: ${r.contractAddress}\n  ${TESTNET.explorer}/address/${r.contractAddress}`);
-            return r.contractAddress;
-          };
-          const usd = await deploy('MockUSD', MockUSD, []);
-          await deploy('Remesa', Remesa, [usd, DEMO.referenceRate]);
-          log('Listo ✔');
+      const demoAddrs = () => {
+        const keys = lsGet('remesa.keys');
+        if (!keys) throw new Error('No hay cuentas de demo: abre primero la app y elige "Polkadot Hub TestNet" en Preparar.');
+        return Object.fromEntries(ROLES.map((r) => [r, privateKeyToAccount(keys[r]).address]));
+      };
+
+      const connectWallet = async () => {
+        if (!window.ethereum) throw new Error('No se encontró MetaMask en este navegador.');
+        const wallet = createWalletClient({ chain, transport: custom(window.ethereum) });
+        const [account] = await wallet.requestAddresses();
+        await wallet.switchChain({ id: chain.id }).catch(() => wallet.addChain({ chain }));
+        log(`Cuenta: ${account}`);
+        return { wallet, account };
+      };
+
+      const wait = async (label, hash) => {
+        const r = await pub.waitForTransactionReceipt({ hash });
+        if (r.status !== 'success') throw new Error(`${label} falló (${hash})`);
+        return r;
+      };
+
+      // Saves both addresses where the app reads them, so Preparar is filled in.
+      const saveForApp = (usd, remesa) => {
+        lsSet('remesa.testnet', { usd, remesa });
+        lsSet('remesa.mode', 'testnet');
+        remesaInput.value = remesa;
+      };
+
+      const action = (fn) => async () => {
+        try {
+          await fn();
         } catch (e) {
           log('Error: ' + (e.shortMessage ?? e.message));
         }
       };
+
+      document.getElementById('deploy').onclick = action(async () => {
+        const { wallet, account } = await connectWallet();
+        const deploy = async (name, c, args) => {
+          log(`Desplegando ${name}… confirma en MetaMask`);
+          const hash = await wallet.deployContract({ account, abi: c.abi, bytecode: c.bytecode, args });
+          const r = await wait(name, hash);
+          if (!r.contractAddress) throw new Error(`${name} sin dirección (${hash})`);
+          log(`${name}: ${r.contractAddress}\n  ${TESTNET.explorer}/address/${r.contractAddress}`);
+          return r.contractAddress;
+        };
+        const usd = await deploy('MockUSD', MockUSD, []);
+        const remesa = await deploy('Remesa', Remesa, [usd, DEMO.referenceRate]);
+        saveForApp(usd, remesa);
+        log('Listo ✔');
+      });
+
+      document.getElementById('fund').onclick = action(async () => {
+        const addrs = demoAddrs();
+        const { wallet, account } = await connectWallet();
+        for (const r of ROLES) {
+          if ((await pub.getBalance({ address: addrs[r] })) >= parseEther('1')) {
+            log(`${r} ya tiene PAS`);
+            continue;
+          }
+          log(`Mandando 2 PAS a ${r} (${addrs[r]})… confirma en MetaMask`);
+          await wait(r, await wallet.sendTransaction({ account, to: addrs[r], value: parseEther('2') }));
+        }
+        log('Cuentas con PAS ✔');
+      });
+
+      document.getElementById('approve').onclick = action(async () => {
+        const remesa = remesaInput.value.trim();
+        if (!/^0x[0-9a-fA-F]{40}$/.test(remesa)) throw new Error('Dirección de Remesa inválida.');
+        const addrs = demoAddrs();
+        const { wallet, account } = await connectWallet();
+        const read = (functionName, args = []) => pub.readContract({ address: remesa, abi: Remesa.abi, functionName, args });
+        const reporter = await read('reporter');
+        if (reporter.toLowerCase() !== account.toLowerCase()) throw new Error(`Esta cuenta no es el reporter (${reporter}). Cambia de cuenta en MetaMask.`);
+        for (const [role, name] of [['cajeroUS', 'Chelsea'], ['cajeroMX', 'Rubén']]) {
+          if (await read('approved', [addrs[role]])) {
+            log(`${name} ya está aprobado`);
+            continue;
+          }
+          const args = [addrs[role], true];
+          await pub.simulateContract({ address: remesa, abi: Remesa.abi, functionName: 'approveCashier', args, account });
+          log(`Aprobando a ${name} (${addrs[role]})… confirma en MetaMask`);
+          await wait(name, await wallet.writeContract({ account, address: remesa, abi: Remesa.abi, functionName: 'approveCashier', args }));
+        }
+        saveForApp(await read('token'), remesa);
+        log('Cajeros aprobados ✔ Ahora abre la app → Preparar → "Preparar demo".');
+      });
     </script>
   </body>
 </html>
