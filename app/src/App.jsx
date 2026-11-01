@@ -279,6 +279,7 @@ function HostHome({ busy, ready, onPick, onDemo }) {
         <button className="primary big-choice" disabled={!!busy || !ready} onClick={() => onPick('nieta')}>
           Recibir dinero
         </button>
+        <Ayuda />
         {busy && <BusyOverlay title={busy} hint="Acepta los permisos que te pida la Polkadot App." />}
         <button className="link" onClick={onDemo}>
           Usar cuenta de demo
@@ -286,6 +287,42 @@ function HostHome({ busy, ready, onPick, onDemo }) {
         <small className="muted">build {__BUILD__}</small>
       </div>
     </main>
+  );
+}
+
+function Ayuda() {
+  return (
+    <details className="help">
+      <summary>¿Cómo se usa? ¿Cómo funciona?</summary>
+      <h3>Cómo se usa</h3>
+      <ol>
+        <li>
+          <strong>Quien recibe</strong> entra a "Recibir dinero" y registra una sola vez su alias y su CLABE. Ahí ve su código QR.
+        </li>
+        <li>
+          <strong>Quien envía</strong> entra a "Enviar dinero", escribe el alias (o escanea el QR) y el monto. Para probar ya, usa el alias <strong>ruben</strong>, que ya está registrado.
+        </li>
+        <li>Toca "Pagar por Zelle" y firma. En segundos el receptor ve sus pesos y toca "Recibí".</li>
+      </ol>
+      <h3>Cómo funciona</h3>
+      <ul>
+        <li>
+          <strong>Cajeros:</strong> personas de la comunidad con cuenta de banco. Dejan una garantía en dólar digital dentro del contrato y publican su tipo de cambio.
+        </li>
+        <li>
+          <strong>Cajera US</strong> recibe tu Zelle y confirma. <strong>Cajero MX</strong> hace el SPEI al receptor. Ganan solo el margen del tipo de cambio, con un tope bajo la referencia de Banxico.
+        </li>
+        <li>
+          <strong>El contrato</strong> elige al cajero con mejor precio, congela su garantía antes de que pagues y solo la libera cuando el receptor confirma. Cobra 0%.
+        </li>
+        <li>
+          <strong>Dólar digital:</strong> lo único que cruza la frontera. Si un cajero no cumple, su garantía responde y pierde reputación.
+        </li>
+      </ul>
+      <small className="muted">
+        Zelle y SPEI son <Simulado /> en esta demo.
+      </small>
+    </details>
   );
 }
 
@@ -354,7 +391,8 @@ function useBanxico() {
 
 function Enviar({ ctx }) {
   const { c, state, busy, run, now } = ctx;
-  const [key, setKey] = useState(ch.DEMO.nieta.nickname);
+  // "ruben" is registered from the phone, so the demo shows money arriving there; maria belongs to the PC demo nieta.
+  const [key, setKey] = useState('ruben');
   const [amount, setAmount] = useState('100');
   const [q, setQ] = useState(null);
   const [dismissed, setDismissed] = useState(0n);
@@ -382,6 +420,7 @@ function Enviar({ ctx }) {
   return (
     <div className="screen">
       <h2>Enviar dinero a México</h2>
+      <Ayuda />
       <label>
         Clave del receptor (alias o CLABE)
         <input value={key} onChange={(e) => setKey(e.target.value.trim())} />
