@@ -7,6 +7,13 @@ empresa guarda el dinero: un contrato con reglas públicas bloquea, asigna y lib
 - App (Vite + React + viem): [app/](app/)
 - Diseño y decisiones: [docs/superpowers/specs/2026-10-31-remesa-demo-design.md](docs/superpowers/specs/2026-10-31-remesa-demo-design.md)
 
+## Equipo
+
+- Rubén Sánchez Mireles
+- Chelsea Sánchez Rincón
+- Ruben Aguillon Segura
+- Javier Isaac Mendoza Medellin
+
 ## 1. Demo sin red (en tu compu)
 
 Necesitas Node 22 o más reciente.
