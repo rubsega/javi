@@ -1,3 +1,4 @@
 public/local.json
 node_modules
 dist
+.demo-keys.json

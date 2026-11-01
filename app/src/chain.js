@@ -38,6 +38,12 @@ export function connect(cfg) {
 
 // Simulate first (free, gives the revert reason), then sign and wait for the block. Gas is never set by hand.
 export async function send(c, role, contract, functionName, args = []) {
+  // Inside the Polkadot App this role signs with its Product account (see host.js).
+  const host = c.host?.[role];
+  if (host) {
+    if (contract !== 'remesa') throw new Error(`${functionName}: solo Remesa se firma desde la Polkadot App`);
+    return host(functionName, args);
+  }
   const { address, abi } = contract === 'usd' ? { address: c.cfg.usd, abi: MockUSD.abi } : { address: c.cfg.remesa, abi: Remesa.abi };
   const { request } = await c.pub.simulateContract({ address, abi, functionName, args, account: c.accounts[role] });
   const hash = await c.wallets[role].writeContract(request);
@@ -175,6 +181,32 @@ export async function setupDemo(c, log = console.log) {
   }
   log('Demo lista ✔');
 }
+
+/// One pass of the demo cashier robot (banks are simulated): our US cashier confirms the Zelle, our MX cashier does the SPEI.
+/// A transfer moves one step per pass; errors on one transfer are logged and the rest still run.
+export async function cashierTick(c, log = console.log) {
+  const [nextId, block] = await Promise.all([read(c, 'nextId'), c.pub.getBlock()]);
+  for (let id = nextId > 20n ? nextId - 19n : 1n; id <= nextId; id++) {
+    const t = await getTransfer(c, id);
+    if (block.timestamp > t.deadline) continue; // TooLate: expiring or reassigning is left to the screens
+    try {
+      if (t.statusName === 'Reserved' && t.cashierUS === c.addr.cajeroUS) {
+        log(`#${id}: Zelle recibido, confirmando…`);
+        await send(c, 'cajeroUS', 'remesa', 'createTransfer', [id]);
+      } else if (t.statusName === 'Assigned' && t.cashierMX === c.addr.cajeroMX) {
+        const folio = makeFolio();
+        log(`#${id}: SPEI enviado, folio ${folio}…`);
+        await send(c, 'cajeroMX', 'remesa', 'markPaid', [id, folio]);
+      }
+    } catch (e) {
+      log(`#${id}: ${errorText(e)}`);
+    }
+  }
+}
+
+/// "remesa:<alias or CLABE>" is what the recipient's QR holds; anything else is not ours.
+export const QR_PREFIX = 'remesa:';
+export const parseRemesaQr = (text) => (text?.startsWith(QR_PREFIX) ? text.slice(QR_PREFIX.length).trim() || null : null);
 
 /// SPEI "clave de rastreo"-like folio (simulated).
 export function makeFolio(date = new Date()) {

@@ -2,14 +2,22 @@
   "name": "remesa-app",
   "private": true,
   "type": "module",
+  "devEngines": {
+    "packageManager": { "name": "pnpm", "version": "12.6.0", "onFail": "download" }
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "compile": "node scripts/compile.mjs",
     "test": "node scripts/compile.mjs && node --test test/*.test.mjs",
-    "demo": "node scripts/local.mjs"
+    "demo": "node scripts/local.mjs",
+    "cajeros": "node scripts/cashiers.mjs"
   },
   "dependencies": {
+    "@parity/product-sdk": "0.39.0",
+    "@parity/product-sdk-descriptors": "npm:@polkadot-community-foundation/product-sdk-descriptors@0.14.0-pcf.1",
+    "jsqr": "1.4.0",
+    "polkadot-api": "3.2.1",
     "qrcode": "1.5.4",
     "react": "19.3.1",
     "react-dom": "19.3.1",

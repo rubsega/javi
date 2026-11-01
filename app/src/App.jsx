@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
+import jsQR from 'jsqr';
+import { getAddress } from 'viem';
 import { generatePrivateKey } from 'viem/accounts';
 import * as ch from './chain.js';
 
@@ -30,14 +32,20 @@ function testnetKeys() {
   return keys;
 }
 
+// Vite serves index.html when a file is missing, so json() throws and we get null.
+const fetchJson = (path) =>
+  fetch(path, { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+
 async function loadConfig() {
-  if (LS.get('remesa.mode') !== 'testnet') {
-    try {
-      const r = await fetch('./local.json', { cache: 'no-store' });
-      if (r.ok) return await r.json(); // Vite serves index.html when the file is missing: json() throws
-    } catch {}
+  // The local chain only exists on the dev machine; a published build is always testnet.
+  if (import.meta.env.DEV && LS.get('remesa.mode') !== 'testnet') {
+    const local = await fetchJson('./local.json');
+    if (local) return local;
   }
-  const t = LS.get('remesa.testnet') ?? {};
+  // Addresses ship in the build (public/testnet.json) because the phone has no Preparar tab; Preparar can override them.
+  const t = LS.get('remesa.testnet') ?? (await fetchJson('./testnet.json')) ?? {};
   return { mode: 'testnet', ...ch.TESTNET, usd: t.usd ?? '', remesa: t.remesa ?? '', keys: testnetKeys() };
 }
 
@@ -88,9 +96,16 @@ export default function App() {
   const [tick, setTick] = useState(0);
   const [clock, setClock] = useState(Date.now() / 1000);
   const offset = useRef(-Infinity);
+  // undefined: checking; null: normal browser (demo keys); {}: inside the Polkadot App, no role yet; {role, h}: connected.
+  const [host, setHost] = useState(undefined);
 
   useEffect(() => {
     loadConfig().then(setCfg);
+    // Loaded on demand so a broken SDK never takes down the browser demo.
+    import('./host.js')
+      .then((m) => m.inHost())
+      .then((inside) => setHost(inside ? {} : null))
+      .catch(() => setHost(null));
     const onHash = () => setRoute(location.hash.slice(1) || 'demo');
     addEventListener('hashchange', onHash);
     const t = setInterval(() => setClock(Date.now() / 1000), 1000);
@@ -101,7 +116,15 @@ export default function App() {
   }, []);
 
   const ready = !!(cfg?.usd && cfg?.remesa);
-  const c = useMemo(() => (cfg ? ch.connect(cfg) : null), [cfg]);
+  const c = useMemo(() => {
+    if (!cfg) return null;
+    const base = ch.connect(cfg);
+    if (!host?.h) return base;
+    // The connected role is the phone's Product account; the other roles keep their demo keys.
+    const { role, h, hostSend } = host;
+    // The SDK gives a lowercase h160; viem reads checksummed addresses, and the screens compare them with ===.
+    return { ...base, addr: { ...base.addr, [role]: getAddress(h.me.h160Address) }, host: { [role]: (fn, args) => hostSend(h, fn, args) } };
+  }, [cfg, host]);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   // The screens react to on-chain state changes; one poll feeds all of them.
@@ -144,12 +167,24 @@ export default function App() {
     }
   };
 
-  if (!cfg) return <div className="loading">Cargando…</div>;
+  if (!cfg || host === undefined) return <div className="loading"><Loader big label="Cargando…" /></div>;
+
+  const connectRole = (role) =>
+    run('Conectando con la Polkadot App', async () => {
+      const m = await import('./host.js');
+      const h = await m.connectHost(cfg.remesa, role);
+      setHost({ role, h, hostSend: m.hostSend });
+    });
+
+  if (host && !host.h)
+    return (
+      <div className="app">
+        {toast && <div className="bar error">⚠ {toast}</div>}
+        <HostHome busy={busy} ready={ready} onPick={connectRole} onDemo={() => setHost(null)} />
+      </div>
+    );
 
   const now = clock + (Number.isFinite(offset.current) ? offset.current : 0);
-  // Zelle is off-chain: the sender's simulated payment is a local flag the US cashier view reads (shared across tabs via localStorage).
-  const zelleKey = `remesa.zelle.${cfg.remesa}`;
-  const zellePaid = LS.get(zelleKey) ?? [];
   const ctx = {
     c,
     cfg,
@@ -158,16 +193,13 @@ export default function App() {
     run,
     now,
     refresh,
-    zellePaid: (id) => zellePaid.includes(String(id)),
-    payZelle: (id) => {
-      LS.set(zelleKey, [...zellePaid, String(id)]);
-      refresh();
-    },
     txUrl: (h) => (cfg.explorer ? `${cfg.explorer}/tx/${h}` : null),
   };
-  const page = !ready || !state ? 'preparar' : route;
+  const hostPage = host?.h && (host.role === 'abuelita' ? 'enviar' : 'recibido');
+  if (hostPage && !state) return <div className="loading">{readError ? `Sin conexión con la red: ${readError}` : <Loader big label="Cargando…" />}</div>;
+  const page = hostPage || (!ready || !state ? 'preparar' : route);
 
-  const tabs = [
+  const tabs = hostPage ? [] : [
     ['demo', 'Demo'],
     ['enviar', 'Remitente'],
     ['cajeroUS', 'Cajera US'],
@@ -189,10 +221,10 @@ export default function App() {
             </a>
           ))}
         </nav>
-        <div className={`net ${cfg.mode}`}>{cfg.mode === 'local' ? 'Cadena local' : 'Polkadot Hub TestNet'}</div>
+        <div className={`net ${cfg.mode}`}>{hostPage ? 'Polkadot App' : cfg.mode === 'local' ? 'Cadena local' : 'Polkadot Hub TestNet'}</div>
       </header>
 
-      {busy && <div className="bar busy">⏳ {busy}… firmando y esperando el bloque</div>}
+      {busy && <BusyOverlay title={busy} hint="Firmando y esperando el bloque" />}
       {toast && (
         <div className="bar error" onClick={() => setToast(null)}>
           ⚠ {toast}
@@ -226,7 +258,56 @@ export default function App() {
         </main>
       )}
 
-      <footer>Reemplazamos al intermediario que decide por uno que solo obedece reglas públicas.</footer>
+      <footer>
+        Reemplazamos al intermediario que decide por uno que solo obedece reglas públicas. <small className="muted">build {__BUILD__}</small>
+      </footer>
+    </div>
+  );
+}
+
+// Inside the Polkadot App: the user only picks what they came to do. No addresses, tokens or gas on screen.
+function HostHome({ busy, ready, onPick, onDemo }) {
+  return (
+    <main className="single">
+      <div className="screen">
+        <h2>Remesa comunitaria</h2>
+        <p className="muted">Envía dólares desde EE. UU. y que lleguen pesos a México en segundos, sin comisión.</p>
+        {!ready && <p className="bad">Falta la dirección del contrato en esta versión de la app.</p>}
+        <button className="primary big-choice" disabled={!!busy || !ready} onClick={() => onPick('abuelita')}>
+          Enviar dinero
+        </button>
+        <button className="primary big-choice" disabled={!!busy || !ready} onClick={() => onPick('nieta')}>
+          Recibir dinero
+        </button>
+        {busy && <BusyOverlay title={busy} hint="Acepta los permisos que te pida la Polkadot App." />}
+        <button className="link" onClick={onDemo}>
+          Usar cuenta de demo
+        </button>
+        <small className="muted">build {__BUILD__}</small>
+      </div>
+    </main>
+  );
+}
+
+function Loader({ label, big }) {
+  return (
+    <span className={`loader${big ? ' big' : ''}`} role="status">
+      <span className="pac-wrap" aria-hidden="true">
+        <span className="pac" />
+        <span className="pac-dots" />
+      </span>
+      {label && <span>{label}</span>}
+    </span>
+  );
+}
+
+function BusyOverlay({ title, hint }) {
+  return (
+    <div className="overlay">
+      <div className="overlay-card">
+        <Loader big label={`${title}…`} />
+        <p className="muted">{hint}</p>
+      </div>
     </div>
   );
 }
@@ -277,6 +358,7 @@ function Enviar({ ctx }) {
   const [amount, setAmount] = useState('100');
   const [q, setQ] = useState(null);
   const [dismissed, setDismissed] = useState(0n);
+  const [scanning, setScanning] = useState(false);
   const banxico = useBanxico();
   const amountWei = parseAmount(amount);
 
@@ -305,6 +387,17 @@ function Enviar({ ctx }) {
         <input value={key} onChange={(e) => setKey(e.target.value.trim())} />
         {key && q && <small className={keyOk ? 'ok' : 'bad'}>{keyOk ? '✔ Clave registrada' : '✖ Clave no registrada'}</small>}
       </label>
+      {scanning ? (
+        <QrScanner
+          onResult={(k) => {
+            setKey(k);
+            setScanning(false);
+          }}
+          onClose={() => setScanning(false)}
+        />
+      ) : (
+        <button onClick={() => setScanning(true)}>📷 Escanear QR del receptor</button>
+      )}
       <label>
         Monto (USD)
         <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -336,13 +429,74 @@ function Enviar({ ctx }) {
       </div>
 
       <button
-        className="primary"
+        className="primary pay"
         disabled={!!busy || !keyOk || !q?.mx || !amountWei}
-        onClick={() => run('Reservando cajero', () => ch.send(c, 'abuelita', 'remesa', 'reserve', [key, amountWei]))}
+        onClick={() => run('Pagando por Zelle', () => ch.send(c, 'abuelita', 'remesa', 'reserve', [key, amountWei]))}
       >
-        Enviar {amountWei ? ch.fmtUSD(amountWei) : ''}
+        Pagar {amountWei ? ch.fmtUSD(amountWei) : ''} por Zelle
       </button>
+      <small className="muted">
+        El pago por Zelle es <Simulado />: al tocarlo se aparta a la cajera y se congela su garantía.
+      </small>
       {q && !q.mx && amountWei && <small className="bad">No hay cajeros disponibles para este monto.</small>}
+    </div>
+  );
+}
+
+// Reads the recipient's "remesa:<key>" QR from the camera. jsQR decodes frames, so it works where BarcodeDetector does not (Chrome on Windows).
+function QrScanner({ onResult, onClose }) {
+  const video = useRef(null);
+  const [msg, setMsg] = useState('Abriendo cámara…');
+
+  useEffect(() => {
+    let stream;
+    let frame;
+    let done = false;
+    const canvas = document.createElement('canvas');
+    const ctx2d = canvas.getContext('2d', { willReadFrequently: true });
+    const tick = () => {
+      if (done) return;
+      const v = video.current;
+      if (v && v.readyState >= 2 && v.videoWidth) {
+        canvas.width = v.videoWidth;
+        canvas.height = v.videoHeight;
+        ctx2d.drawImage(v, 0, 0);
+        const code = jsQR(ctx2d.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+        if (code) {
+          const key = ch.parseRemesaQr(code.data);
+          if (key) {
+            done = true;
+            return onResult(key);
+          }
+          setMsg('Ese QR no es de Remesa.');
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    navigator.mediaDevices
+      ?.getUserMedia({ video: { facingMode: 'environment' } })
+      .then((s) => {
+        stream = s;
+        if (done) return;
+        video.current.srcObject = s;
+        video.current.play().catch(() => {});
+        setMsg('Apunta al QR del receptor');
+        tick();
+      })
+      .catch(() => setMsg('No se pudo abrir la cámara. Revisa el permiso del navegador.')) ??
+      setMsg('Este navegador no permite usar la cámara (necesita https o localhost).');
+    return () => {
+      done = true;
+      cancelAnimationFrame(frame);
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  return (
+    <div className="card scanner">
+      <video ref={video} className="scanner-video" muted playsInline aria-label="Vista de la cámara para escanear el QR" />
+      <small className="muted">{msg}</small>
+      <button onClick={onClose}>Cancelar</button>
     </div>
   );
 }
@@ -355,8 +509,8 @@ function EnvioEnCurso({ ctx, t, onNew }) {
   if (t.statusName === 'Reserved') {
     return (
       <div className="screen">
-        <h2>Paga por Zelle</h2>
-        <p className="muted">Ya apartamos a un cajero para ti. Su garantía está congelada en el contrato.</p>
+        <h2>Pagaste por Zelle</h2>
+        <p className="muted">La garantía de la cajera ya está congelada en el contrato para tu envío.</p>
         <div className="bank zelle">
           <div className="bank-head">
             Zelle <Simulado />
@@ -368,14 +522,8 @@ function EnvioEnCurso({ ctx, t, onNew }) {
           <div className="amount">{ch.fmtUSD(t.amountUSD)}</div>
           {left > 0 ? (
             <>
-              {ctx.zellePaid(t.id) ? (
-                <p className="ok">✔ Pagado. Esperando que la cajera confirme que recibió tu Zelle…</p>
-              ) : (
-                <button className="zelle-btn" onClick={() => ctx.payZelle(t.id)}>
-                  Pagar {ch.fmtUSD(t.amountUSD)}
-                </button>
-              )}
-              <small className="muted">La reserva vence en {mmss(left)}</small>
+              <p className="ok">✔ Pagado. Esperando que la cajera confirme que recibió tu Zelle…</p>
+              <small className="muted">Si no confirma, la reserva vence en {mmss(left)}</small>
             </>
           ) : (
             <>
@@ -458,7 +606,6 @@ function CajeroUS({ ctx }) {
       <h2>Zelle por confirmar</h2>
       {orders.length === 0 && <p className="muted">Esperando envíos…</p>}
       {orders.map((t) => {
-        const paid = ctx.zellePaid(t.id);
         return (
           <div key={String(t.id)} className="bank zelle">
             <div className="bank-head">
@@ -469,10 +616,10 @@ function CajeroUS({ ctx }) {
               <span>Sueltas al confirmar</span>
               <span>{ch.fmtUSD(t.usdtAmount)} digitales</span>
             </div>
-            {paid ? <p className="ok">✔ Te llegó el Zelle</p> : <p className="muted">Aún no llega el pago…</p>}
+            <p className="ok">✔ Te llegó el Zelle</p>
             <button
               className="primary"
-              disabled={!!busy || !paid}
+              disabled={!!busy}
               onClick={() => run('Confirmando Zelle', () => ch.send(c, 'cajeroUS', 'remesa', 'createTransfer', [t.id]))}
             >
               Ya recibí el Zelle
@@ -557,7 +704,7 @@ function SpeiCard({ ctx, t }) {
       {left > 0 ? (
         <>
           <button className="primary" disabled={!!busy} onClick={pay}>
-            {phase ?? 'Enviar SPEI'}
+            {phase ? <Loader label={phase} /> : 'Enviar SPEI'}
           </button>
           <small className={left < 120 ? 'bad' : 'muted'}>Plazo para pagar: {mmss(left)}</small>
         </>
@@ -604,6 +751,31 @@ function CashierCard({ name, k, rateLabel }) {
 
 // ---------- Recibido (recipient) ----------
 
+// First visit of a new recipient (e.g. the phone's Product account): claim an alias and a CLABE once.
+function RegistrarClave({ ctx }) {
+  const { c, busy, run } = ctx;
+  const [alias, setAlias] = useState('');
+  const [clabe, setClabe] = useState('');
+  const ok = alias.length > 0 && /^\d{18}$/.test(clabe);
+  return (
+    <div className="screen">
+      <h2>Registra tu clave para recibir</h2>
+      <p className="muted">Una sola vez. Quien te envíe dinero usará tu alias, tu CLABE o tu código QR.</p>
+      <label>
+        Alias
+        <input value={alias} onChange={(e) => setAlias(e.target.value.trim().toLowerCase())} placeholder="ej. sofia" />
+      </label>
+      <label>
+        CLABE (18 dígitos) <Simulado />
+        <input inputMode="numeric" value={clabe} onChange={(e) => setClabe(e.target.value.replace(/\D/g, '').slice(0, 18))} />
+      </label>
+      <button className="primary" disabled={!!busy || !ok} onClick={() => run('Registrando tu clave', () => ch.send(c, 'nieta', 'remesa', 'registerKey', [alias, clabe]))}>
+        Registrar
+      </button>
+    </div>
+  );
+}
+
 function Recibido({ ctx }) {
   const { c, state, busy, run } = ctx;
   const latest = state.transfers.find((t) => t.recipient === c.addr.nieta && ['Paid', 'Confirmed', 'Disputed'].includes(t.statusName));
@@ -613,9 +785,11 @@ function Recibido({ ctx }) {
   // QR the sender scans to fill in the recipient key. Prefix "remesa:" tells our scanner it is ours.
   const [myQr, setMyQr] = useState(null);
 
+  // The CLABE always resolves to this recipient, so the QR works for whoever is signed in (demo nieta or the phone's account).
   useEffect(() => {
-    QRCode.toDataURL(`remesa:${ch.DEMO.nieta.nickname}`, { margin: 1, width: 160 }).then(setMyQr);
-  }, []);
+    if (!state.clabe) return setMyQr(null);
+    QRCode.toDataURL(`${ch.QR_PREFIX}${state.clabe}`, { margin: 1, width: 160 }).then(setMyQr);
+  }, [state.clabe]);
 
   useEffect(() => {
     setPaidTx(null);
@@ -627,6 +801,9 @@ function Recibido({ ctx }) {
     if (!paidTx) return setQr(null);
     QRCode.toDataURL(ctx.txUrl(paidTx) ?? paidTx, { margin: 1, width: 140 }).then(setQr);
   }, [paidTx]);
+
+  // After all hooks: React needs the same hook count on every render, before and after registering.
+  if (!state.clabe) return <RegistrarClave ctx={ctx} />;
 
   return (
     <div className="screen">
@@ -647,7 +824,7 @@ function Recibido({ ctx }) {
         <small className="muted">Muéstralo para que te envíen dinero. Lo escanean desde la pantalla "Enviar".</small>
       </div>
 
-      {incoming && <div className="notice wait">💸 Tu dinero viene en camino (envío #{String(incoming.id)})…</div>}
+      {incoming && <div className="notice wait"><Loader /> Tu dinero viene en camino (envío #{String(incoming.id)})…</div>}
 
       {latest && (
         <>
@@ -679,7 +856,7 @@ function Recibido({ ctx }) {
           </div>
           {latest.statusName === 'Paid' && (
             <div className="actions">
-              <button className="primary" disabled={!!busy} onClick={() => run('Confirmando', () => ch.send(c, 'nieta', 'remesa', 'confirm', [latest.id]))}>
+              <button className="primary pay" disabled={!!busy} onClick={() => run('Confirmando', () => ch.send(c, 'nieta', 'remesa', 'confirm', [latest.id]))}>
                 Recibí
               </button>
               <button className="danger" disabled={!!busy} onClick={() => run('Abriendo disputa', () => ch.send(c, 'nieta', 'remesa', 'dispute', [latest.id]))}>
@@ -703,6 +880,17 @@ function Preparar({ ctx, setCfg }) {
   const [usd, setUsd] = useState(cfg.usd);
   const [remesa, setRemesa] = useState(cfg.remesa);
   const [showKeys, setShowKeys] = useState(false);
+  const [keysText, setKeysText] = useState(() => JSON.stringify(cfg.keys, null, 2));
+  const importKeys = () => {
+    try {
+      const keys = JSON.parse(keysText);
+      if (!ch.ROLES.every((r) => /^0x[0-9a-fA-F]{64}$/.test(keys[r] ?? ''))) throw new Error();
+      LS.set('remesa.keys', Object.fromEntries(ch.ROLES.map((r) => [r, keys[r]])));
+      location.reload();
+    } catch {
+      alert('Texto inválido: debe ser el JSON exportado con las 4 cuentas.');
+    }
+  };
   const ready = !!(cfg.usd && cfg.remesa);
 
   useEffect(() => {
@@ -826,7 +1014,9 @@ function Preparar({ ctx, setCfg }) {
           {showKeys && (
             <>
               <p className="bad">Solo red de pruebas. Guarda este texto si vas a borrar los datos del navegador.</p>
-              <textarea readOnly className="mono" rows={6} value={JSON.stringify(cfg.keys, null, 2)} />
+              <p className="muted">Para usar las mismas cuentas en otro dispositivo, pega aquí el texto exportado y toca "Importar".</p>
+              <textarea className="mono" rows={6} value={keysText} onChange={(e) => setKeysText(e.target.value)} />
+              <button onClick={importKeys}>Importar cuentas</button>
             </>
           )}
         </>
