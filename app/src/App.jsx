@@ -212,7 +212,7 @@ export default function App() {
     <div className="app">
       <header className="top">
         <div className="brand">
-          Remesa <span className="tag">comunitaria</span>
+          Iris <span className="tag">remesas</span>
         </div>
         <nav>
           {tabs.map(([k, label]) => (
@@ -270,7 +270,7 @@ function HostHome({ busy, ready, onPick, onDemo }) {
   return (
     <main className="single">
       <div className="screen">
-        <h2>Remesa comunitaria</h2>
+        <h2>Iris</h2>
         <p className="muted">Envía dólares desde EE. UU. y que lleguen pesos a México en segundos, sin comisión.</p>
         {!ready && <p className="bad">Falta la dirección del contrato en esta versión de la app.</p>}
         <button className="primary big-choice" disabled={!!busy || !ready} onClick={() => onPick('abuelita')}>
